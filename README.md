@@ -31,6 +31,7 @@ For the next sections, we assume the disk image to be `./devvm.qcow2`
     *  `sudo mkdir -p dnsmasq-hostsdir && sudo dnsmasq -C dnsmasq.conf`
 * Start NFS server (runs in foreground, use tmux or similar)
     * `modprobe nfsd`
+    * `modprobe nfs`
     * ```
       sudo ./docker_nfs_server.bash 192.168.124.1 192.168.124.50 /directory/to/share ...
                                     ^             ^              ^ 
@@ -63,6 +64,7 @@ Feel encouraged to hack around in the file.)
 On first launch, use the serial console to log in as `root` (passwordless, see above).
 Then
 
+* disable unattended upgrades (`systemctl disable unattended-upgrades.service`)
 * create a user account with the same user ID as on the host
 * grant that user passwdless sudo for convenience
 * you will use that user account to log into the VM via SSH, so setup `authorized_keys` appropriately

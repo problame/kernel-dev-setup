@@ -125,6 +125,7 @@ for d in vfiodevs:
     if cd == drivername:
         continue
     else:
+        print(cd)
         if cd is not None:
             unbind = d.sysfs / "driver" / "unbind"
             unbind.write_text(d.domain_bus_slot_function)
@@ -137,8 +138,8 @@ for d in vfiodevs:
         # do this instead of reloading the vfio_pci kmod to apply driver_override
         bind = Path(f"/sys/module/{modulename}/drivers/pci:{drivername}/bind")
         assert bind.exists() # modprobe vfio_pci
-        print(d.domain_bus_slot_function)
-        bind.write_text(d.domain_bus_slot_function)
+        print(bind, d.domain_bus_slot_function)
+        bind.write_text(d.domain_bus_slot_function) # [Errno 19] No such device ? => set intel_iommu=on ?
         cd = pcie_get_currently_bound_driver(d)
         assert cd == drivername
 
