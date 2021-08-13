@@ -7,14 +7,18 @@ from pathlib import Path
 import argparse
 import itertools
 import re
+import time
+import sys
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--hdd-qcow2-image", type=Path, required=True)
 parser.add_argument("--name", type=str, required=True)
 parser.add_argument("--bridge", type=str, required=True)
 parser.add_argument("-m", type=str, required=True)
-parser.add_argument("--smp", type=str, required=True, help="example: " "8,sockets=1,cores=8,threads=1",
-)
+# need one of --smp or --host-cpus
+parser.add_argument("--smp", type=str, help="example: " "8,sockets=1,cores=8,threads=1")
+parser.add_argument("--host-cpus", type=str, help="comma-separated list of host cpus to map to vcpus")
+
 parser.add_argument("--vfio-passthrough", type=str, action='append', help="like 0000:3c:00.0", default=[])
 parser.add_argument("--undo-vfio-passthrough", type=str)
 parser.add_argument("--nvdimm", type=str, action='append', default=[], help="like --nvdimm /dev/dax0.1,size=1G,pmem=off")
@@ -147,6 +151,33 @@ if args.undo_vfio_passthrough is not None:
     print(f"undid vfio passthrough to driver {args.undo_vfio_passthrough}")
     sys.exit(0)
 
+
+def get_numa_node(cpu):
+    try:
+        return next(Path(f"/sys/devices/system/cpu/cpu{cpu}").glob("node*")).name
+    except:
+        print(f"invalid --host-cpu {cpu}")
+        sys.exit(1)
+
+smp = args.smp
+numa_options = []
+if args.host_cpus is not None:
+    host_cpus = args.host_cpus.split(',')
+    numa_nodes = [get_numa_node(cpu) for cpu in host_cpus]
+    numa_nodes_set = set(numa_nodes)
+    smp = f"{len(host_cpus)},sockets={len(numa_nodes_set)}"
+    get_cpus_for_node = lambda node: ",".join([f"cpus={idx}" for idx, [cpu, n] in enumerate(zip(host_cpus, numa_nodes)) if n == node])
+    numa_options = sum([["-numa", f"node,nodeid={node[len('node'):]},{get_cpus_for_node(node)}"] for node in numa_nodes_set], [])
+    print(f"smp: {smp}")
+    print(f"numa_options: {numa_options}")
+    print("CPU mapping:")
+    for idx, [cpu, node] in enumerate(zip(host_cpus, numa_nodes)):
+        print(f"vCPU {idx} => host CPU {cpu} ({node})")
+
+if smp is None:
+    print(f"need either --smp or --host-cpus")
+    sys.exit(1)
+
 cmdline = [
     "/usr/bin/qemu-system-x86_64",
     "-name",
@@ -180,7 +211,8 @@ cmdline = [
 
     # "-overcommit",
     # "mem-lock=off",
-    "-smp", args.smp,
+    "-smp", smp,
+    *numa_options,
     # "-uuid",
     # "36c3ce6e-b4f6-49b3-a60a-82dc243ab787",
     # "-no-user-config",
@@ -267,4 +299,24 @@ cmdline = [
 ]
 
 print(cmdline)
-os.execvp(cmdline[0], args=cmdline)
+
+pid = os.fork()
+if pid == 0:
+    os.execvp(cmdline[0], args=cmdline)
+
+# Set up vCPU pinning
+if args.host_cpus is not None:
+    task = Path("/proc") / str(pid) / "task"
+    vcpus = []
+    while len(vcpus) == 0:
+        time.sleep(0.1)
+        vcpus = [d for d in task.iterdir() if d.is_dir() and (d / "comm").read_text().startswith("CPU")]
+
+    for vcpu in vcpus:
+        vcpu_pid = vcpu.name
+        vcpu_id = (vcpu / "comm").read_text().split("/")[0][len("CPU "):]
+        print(f"thread {vcpu_pid} is vCPU {vcpu_id}")
+
+        subprocess.run(["taskset", "-p", "-c", host_cpus[int(vcpu_id)], vcpu_pid], check=True)
+
+os.waitpid(pid, 0)
