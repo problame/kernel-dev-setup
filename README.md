@@ -18,6 +18,24 @@ The scripts in this directory will help you to stand up a development environmen
 
 For the next sections, we assume the disk image to be `./devvm.qcow2`
 
+#### Prepare Kernel Tree
+
+*for booting a kernel built on the host system*
+
+* Enable kernel options for virtio and 9p (no modules)
+  * `CONFIG_VIRTIO_BLK=y`
+  * `CONFIG_9P_FS=y`
+  * `CONFIG_NET_9P=y`
+  * `CONFIG_NET_9P_VIRTIO=y`
+* Build bzImage and modules
+* After launching the VM with `--kernel-tree`
+  * Mount the kernel tree (e.g., via `/etc/fstab`)
+    * `kernelfs /usr/src/linux-host 9p nofail 0 0`
+  * Link the kernel tree to the modules directory
+    * `ln -s /usr/src/linux-host /lib/modules/$(uname -r)`
+  * Run `depmod`
+* After a reboot, the VM should successfully load kernel modules
+
 #### (Every Boot Of The Host)
 
 * Start docker daemon

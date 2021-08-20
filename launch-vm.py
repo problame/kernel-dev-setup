@@ -19,6 +19,9 @@ parser.add_argument("-m", type=str, required=True)
 parser.add_argument("--smp", type=str, help="example: " "8,sockets=1,cores=8,threads=1")
 parser.add_argument("--host-cpus", type=str, help="comma-separated list of host cpus to map to vcpus")
 
+parser.add_argument("--kernel-tree", type=Path, help="path to kernel tree with built bzImage")
+parser.add_argument("--kernel-cmdline", type=str, help="kernel cmdline options")
+
 parser.add_argument("--vfio-passthrough", type=str, action='append', help="like 0000:3c:00.0", default=[])
 parser.add_argument("--undo-vfio-passthrough", type=str)
 parser.add_argument("--nvdimm", type=str, action='append', default=[], help="like --nvdimm /dev/dax0.1,size=1G,pmem=off")
@@ -178,6 +181,18 @@ if smp is None:
     print(f"need either --smp or --host-cpus")
     sys.exit(1)
 
+kernel_options = []
+if args.kernel_tree is not None:
+    bzImage = args.kernel_tree / "arch/x86/boot/bzImage"
+    assert bzImage.is_file()
+
+    kernel_options = [
+        # note: passthrough is necessary for symbolic links to work
+        "-virtfs", f"local,path={args.kernel_tree},mount_tag=kernelfs,security_model=passthrough,id=kernelfs",
+        "-kernel", f"{bzImage}",
+        "-append", f"root=/dev/vda1 console=ttyS0,115200 {args.kernel_cmdline or ''}",
+    ]
+
 cmdline = [
     "/usr/bin/qemu-system-x86_64",
     "-name",
@@ -292,8 +307,8 @@ cmdline = [
     # "-msg",
     # "timestamp=on",
     "-nographic",
-    # "-kernel", "/home/cs/development/external/linux/linux/arch/x86/boot/bzImage",
-    # "-append", "root=/dev/vda1 nokaslr ro console=ttyS0,115200",
+
+    *kernel_options,
  #   "-serial", "stdio",
 #    "-serial", "tcp::55555,server,nowait",
 ]
