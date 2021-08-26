@@ -335,3 +335,7 @@ if args.host_cpus is not None:
         subprocess.run(["taskset", "-p", "-c", host_cpus[int(vcpu_id)], vcpu_pid], check=True)
 
 os.waitpid(pid, 0)
+
+# The serial console does funky things to the terminal, try to reset it in tmux.
+if 'TMUX' in os.environ:
+    subprocess.run(["tmux", "send-keys", "-t", os.environ["TMUX_PANE"], "-R"])
