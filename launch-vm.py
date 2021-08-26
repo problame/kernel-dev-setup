@@ -9,6 +9,7 @@ import itertools
 import re
 import time
 import sys
+import shlex
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--hdd-qcow2-image", type=Path, required=True)
@@ -21,6 +22,7 @@ parser.add_argument("--host-cpus", type=str, help="comma-separated list of host 
 
 parser.add_argument("--kernel-tree", type=Path, help="path to kernel tree with built bzImage")
 parser.add_argument("--kernel-cmdline", type=str, help="kernel cmdline options")
+parser.add_argument("--kgdb", action='store_true', help="enable kgdb (only works with --kernel-tree)")
 
 parser.add_argument("--vfio-passthrough", type=str, action='append', help="like 0000:3c:00.0", default=[])
 parser.add_argument("--undo-vfio-passthrough", type=str)
@@ -186,11 +188,34 @@ if args.kernel_tree is not None:
     bzImage = args.kernel_tree / "arch/x86/boot/bzImage"
     assert bzImage.is_file()
 
+    cmdline = f"root=/dev/vda1 console=ttyS0,115200 {args.kernel_cmdline or ''}"
+
     kernel_options = [
         # note: passthrough is necessary for symbolic links to work
         "-virtfs", f"local,path={args.kernel_tree},mount_tag=kernelfs,security_model=passthrough,id=kernelfs",
         "-kernel", f"{bzImage}",
-        "-append", f"root=/dev/vda1 console=ttyS0,115200 {args.kernel_cmdline or ''}",
+    ]
+
+    if args.kgdb:
+        if not (args.kernel_tree / "vmlinux-gdb.py").is_file():
+            print("run `make scripts_gdb` for kgdb to work")
+            sys.exit(1)
+        gdb_cmdline = [
+            "gdb",
+            "-ex", f"add-auto-load-safe-path {args.kernel_tree}",
+            "-ex", f"file {args.kernel_tree / 'vmlinux'}",
+            "-ex", "target remote :55555",
+        ]
+        print("\n\033[1mkgdb enabled\033[0m, connect with")
+        print(f"\t{shlex.join(gdb_cmdline)}\n")
+        kernel_options +=  [
+            "-serial", "mon:stdio",
+            "-serial", "tcp::55555,server,nowait",
+        ]
+        cmdline += " kgdboc=ttyS1,115200 kgdbwait"
+
+    kernel_options += [
+        "-append", cmdline,
     ]
 
 cmdline = [
@@ -304,13 +329,11 @@ cmdline = [
     #"-object", "memory-backend-file,id=mem3,share=on,mem-path=/dev/dax2.0,size=120G,align=2M",
     #"-device", "nvdimm,id=nvdimm3,memdev=mem3,slot=3",
 
-    # "-msg",
-    # "timestamp=on",
+    # "-msg", "timestamp=on",
+
     "-nographic",
 
     *kernel_options,
- #   "-serial", "stdio",
-#    "-serial", "tcp::55555,server,nowait",
 ]
 
 print(cmdline)
