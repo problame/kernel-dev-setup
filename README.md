@@ -27,6 +27,7 @@ For the next sections, we assume the disk image to be `./devvm.qcow2`
   * `CONFIG_9P_FS=y`
   * `CONFIG_NET_9P=y`
   * `CONFIG_NET_9P_VIRTIO=y`
+  * Make sure your root file system is not built as a module (e.g., `CONFIG_EXT4_FS=y`)
 * Build bzImage and modules
 * After launching the VM with `--kernel-tree`
   * Mount the kernel tree (e.g., via `/etc/fstab`)
@@ -104,5 +105,6 @@ Then
 
 #### Debugging Using kgdb
 
-TODO
-
+* Set up host kernel tree (see above)
+* Launch with `--kgdb`
+* Copy gdb command from output (near top) to connect
