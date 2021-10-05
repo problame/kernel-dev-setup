@@ -8,9 +8,11 @@ The scripts in this directory will help you to stand up a development environmen
 
 #### (Once) Prepare Disk Image (Part 1)
 
+*The script `prepare-image.sh` automates these steps.*
+
 * Download a Debian Bullseye VM cloud image (qcow2, generic cloud image)
     * https://cloud.debian.org/images/cloud/
-* Resize the image using qemu-resize
+* Resize the image using `qemu-img resize`
 * Mount the image using `losetup`, or `nbd`
 * Repair GPT & resize root partition (e.g. using `parted`)
 * Make `root` user passwdless by removing the `*` in `/mnt/etc/shadow`
@@ -44,6 +46,7 @@ For the next sections, we assume the disk image to be `./devvm.qcow2`
     * `sudo ansible-playbook setup-vm-network.ansible.yml `
 * Fedora / `firewalld`: add the bridge interface to the trusted zone
     * `sudo firewall-cmd --add-interface=devbr0 --zone=trusted --permanent`
+    * again without `--permanent`
     * Re-run the ansible playbook to fixup our iptables NAT rules
 * Run dnsmasq in foreground (use tmux or similar)
     * Maybe kill other dnsmasqs (think before copy-pasting) `sudo killall dnsmask`
