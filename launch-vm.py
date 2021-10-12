@@ -28,6 +28,8 @@ parser.add_argument("--vfio-passthrough", type=str, action='append', help="like 
 parser.add_argument("--undo-vfio-passthrough", type=str)
 parser.add_argument("--nvdimm", type=str, action='append', default=[], help="like --nvdimm /dev/dax0.1,size=1G,pmem=off")
 parser.add_argument("--drive", type=str, action='append', default=[], help="either a path to a file/blockdev or a qemu -drive option")
+
+parser.add_argument("--tmux", action='store_true', help="launch everything in a tmux window")
 args = parser.parse_args()
 
 hdd_img = args.hdd_qcow2_image
@@ -353,27 +355,57 @@ cmdline = [
 
 print(cmdline)
 
-pid = os.fork()
-if pid == 0:
-    os.execvp(cmdline[0], args=cmdline)
-
 # Set up vCPU pinning
-if args.host_cpus is not None:
-    task = Path("/proc") / str(pid) / "task"
-    vcpus = []
-    while len(vcpus) == 0:
-        time.sleep(0.1)
-        vcpus = [d for d in task.iterdir() if d.is_dir() and (d / "comm").read_text().startswith("CPU")]
+def setup_pinning(pid):
+    if args.host_cpus is not None:
+        task = Path("/proc") / str(pid) / "task"
+        vcpus = []
+        while len(vcpus) == 0:
+            time.sleep(0.1)
+            vcpus = [d for d in task.iterdir() if d.is_dir() and (d / "comm").read_text().startswith("CPU")]
 
-    for vcpu in vcpus:
-        vcpu_pid = vcpu.name
-        vcpu_id = (vcpu / "comm").read_text().split("/")[0][len("CPU "):]
-        print(f"thread {vcpu_pid} is vCPU {vcpu_id}")
+        for vcpu in vcpus:
+            vcpu_pid = vcpu.name
+            vcpu_id = (vcpu / "comm").read_text().split("/")[0][len("CPU "):]
+            print(f"thread {vcpu_pid} is vCPU {vcpu_id}")
 
-        subprocess.run(["taskset", "-p", "-c", host_cpus[int(vcpu_id)], vcpu_pid], check=True)
+            subprocess.run(["taskset", "-p", "-c", host_cpus[int(vcpu_id)], vcpu_pid], check=True)
 
-os.waitpid(pid, 0)
+def run_until_successful(*args, **kwargs):
+    ret = -1
+    while ret != 0:
+        result = subprocess.run(*args, **kwargs)
+        ret = result.returncode
+        time.sleep(0.01)
+    return result
 
-# The serial console does funky things to the terminal, try to reset it in tmux.
-if 'TMUX' in os.environ:
-    subprocess.run(["tmux", "send-keys", "-t", os.environ["TMUX_PANE"], "-R"])
+if args.tmux:
+    assert 'TMUX' in os.environ # sudo -E
+    [sudo_pid, tmux_window] = subprocess.run(["tmux", "new-window", "-P", "-F", "#{pane_pid}\n#{session_name}:#{window_index}", "-n", args.name, "sudo", *cmdline], capture_output=True, text=True, check=True).stdout.strip().split("\n")
+    # sudo (usually) forks
+    pid = run_until_successful(["pgrep", "-P", sudo_pid], capture_output=True, text=True).stdout.split("\n")[0]
+    setup_pinning(pid)
+    subprocess.run(["tmux", "set-option", "-t", tmux_window, "pane-border-status", "top"], check=True)
+    subprocess.run(["tmux", "set-option", "-t", tmux_window, "pane-border-format", "#{?@custom_pane_title,#{@custom_pane_title},#{pane_title}}"], check=True)
+    subprocess.run(["tmux", "set-option", "-pt", tmux_window, "remain-on-exit", "on"], check=True)
+    subprocess.run(["tmux", "set-option", "-pt", tmux_window, "@custom_pane_title", "QEMU Serial Console"], check=True)
+    # Pane for SSH into the VM
+    tmux_pane_ssh = subprocess.run(["tmux", "split-window", "-P", "-h", "-t", tmux_window], capture_output=True, text=True, check=True).stdout.strip()
+    subprocess.run(["tmux", "set-option", "-pt", tmux_pane_ssh, "@custom_pane_title", "SSH"], check=True)
+    subprocess.run(["tmux", "send-keys", "-t", tmux_pane_ssh, "ssh -o StrictHostKeyChecking=no root@192.168.124.50"], check=True)
+    # Pane for kgdb
+    if args.kgdb:
+        tmux_pane_kgdb = subprocess.run(["tmux", "split-window", "-P", "-v", "t", tmux_window, *gdb_cmdline], capture_output=True, text=True, check=True).stdout.strip()
+        subprocess.run(["tmux", "set-option", "-pt", tmux_pane_kgdb, "@custom_pane_title", "GDB"], check=True)
+else:
+    pid = os.fork()
+    if pid == 0:
+        os.execvp(cmdline[0], args=cmdline)
+
+    setup_pinning(pid)
+    os.waitpid(pid, 0)
+
+    # The serial console does funky things to the terminal, try to reset it in tmux.
+    if 'TMUX' in os.environ:
+        subprocess.run(["tmux", "send-keys", "-t", os.environ["TMUX_PANE"], "-R"])
+
