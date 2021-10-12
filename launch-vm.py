@@ -27,6 +27,7 @@ parser.add_argument("--kgdb", action='store_true', help="enable kgdb (only works
 parser.add_argument("--vfio-passthrough", type=str, action='append', help="like 0000:3c:00.0", default=[])
 parser.add_argument("--undo-vfio-passthrough", type=str)
 parser.add_argument("--nvdimm", type=str, action='append', default=[], help="like --nvdimm /dev/dax0.1,size=1G,pmem=off")
+parser.add_argument("--drive", type=str, action='append', default=[], help="either a path to a file/blockdev or a qemu -drive option")
 args = parser.parse_args()
 
 hdd_img = args.hdd_qcow2_image
@@ -73,6 +74,18 @@ for arg in args.nvdimm:
     pmem = mustremoveprefix(split[2], "pmem=")
     assert pmem in [ "on", "off"]
     nvdimms.append(NVDIMM(arg=arg, path=path, size=size, pmem=pmem))
+
+drives = []
+for arg in args.drive:
+    drives.append("-drive")
+    path = Path(arg)
+    if path.exists():
+        if path.is_block_device():
+            drives.append(f"file={path},cache=none,if=virtio")
+        else:
+            drives.append(f"file={path},if=virtio")
+    else:
+        drives.append(arg)
 
 this_path = Path(os.path.dirname(os.path.realpath(__file__)))
 upscriptpath = this_path / "launch-vm.up.bash"
@@ -291,6 +304,8 @@ cmdline = [
     f"file={hdd_img},format=qcow2,if=none,id=drive-virtio-disk0",
     "-device",
     "virtio-blk-pci,scsi=off,drive=drive-virtio-disk0,id=virtio-disk0,bootindex=1",
+
+    *drives,
 
     "-netdev",
     f"tap,br={args.bridge},id=hostnet0,script={upscriptpath},downscript={downscriptpath}",
